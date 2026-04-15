@@ -1,0 +1,260 @@
+---
+title: "Data Cleaning Assignment"
+author: "Hylaea Miller"
+format: html
+warning: FALSE
+---
+
+## Week 2 - Arctic Shorebird Demographics Network Data Cleaning
+
+Our goal is to:
+
+-   Clean the Water_cover column to transform it into the correct data type and respect expectations for a percentage
+
+-   Clean the Land_cover column to transform it into the correct data type and respect expectations for a percentage
+
+-   Use the relationship that the three cover columns (Snow, Water, Land) should sum up to 100% to infer missing values where possible and recompute the Total_cover column as needed
+
+## Setup
+
+```{r}
+#| message: false
+# Load library
+library(tidyverse)
+
+# File name
+datadir_processed <- file.path("data", "processed")
+snowsurvey_file <- "snow_cover.csv"
+
+
+```
+
+## Data Exploration
+
+We start from the already cleaned Snow_cover output generated during class, which contains the corrected snow cover values.
+
+```{r}
+# Import the cleaned snow cover data
+cover_df <- read_csv(file.path(datadir_processed, snowsurvey_file))
+
+# Inspect column types and structure
+glimpse(cover_df)
+```
+
+From `glimpse()` we can see that Water_cover and Land_cover are stored as character columns. Since these represent percentages, they should be numeric. We will clean both columns following the same approach used for Snow_cover
+
+
+## Water_cover Cleaning
+
+### Exploration
+
+We first identify all non-numeric values to understand what needs to be fixed before converting the column to numeric.
+
+```{r}
+# Count non-numeric values in Water_cover
+cover_df %>%
+  count(Water_cover) %>%
+  filter(is.na(as.numeric(Water_cover)))
+```
+
+We find the same symbols seen in Snow_cover that are not numeric. According to the metadata, "a blank or '-' indicates absence of data", so these values will be replaced with NA. Values such as `n/a`, `unk`, 
+and `.` are not defined in the metadata and will be treated as NA for consistency. 
+
+### Fix Non-numeric Values
+
+```{r}
+# Replace unknown/missing string values with NA
+cover_df <- cover_df %>%
+  mutate(
+    Water_cover = ifelse(
+      Water_cover %in% c(".", "-", "n/a", "unk"), NA, Water_cover
+    ))
+```
+
+Let’s check again if the symbols are gone.
+```{r}
+# Verify that no non numeric values remain
+cover_df %>%
+  count(Water_cover) %>%
+  filter(is.na(as.numeric(Water_cover)))
+```
+
+All good. Let’s do the numeric transformation next.
+
+```{r}
+# Convert Water_cover to numeric
+cover_df <- cover_df %>%
+  mutate(Water_cover = as.numeric(Water_cover))
+```
+
+### Validate Percentage Range
+
+Since Water_cover represents a percentage, all values must be between 0 and 100. Values outside this range can be considered not correct and are set to `NA`.
+
+```{r}
+# Check for values outside the valid percentage range
+cover_df %>%
+  filter(Water_cover > 100 | Water_cover < 0)
+```
+Since we identified one column with values greater than 100, let’s fix it
+
+```{r}
+# Set out-of-range values to NA
+cover_df <- cover_df %>%
+  mutate(Water_cover = ifelse(Water_cover > 100, NA, Water_cover))
+```
+
+
+
+## Land_cover Cleaning
+
+We apply the same cleaning steps to the Land_cover column.
+
+### Exploration
+
+```{r}
+# Count non-numeric values in Land_cover
+cover_df %>%
+  count(Land_cover) %>%
+  filter(is.na(as.numeric(Land_cover)))
+```
+
+The same unknown value symbols are present, so we can apply the same replacements as above.
+
+### Fix Non-numeric Values
+
+```{r}
+# Replace unknown/missing string values with NA
+cover_df <- cover_df %>%
+  mutate(
+    Land_cover = ifelse(
+      Land_cover %in% c(".", "-", "n/a", "unk"), NA, Land_cover))
+
+```
+
+```{r}
+# Convert Land_cover to numeric
+cover_df <- cover_df %>%
+  mutate(Land_cover = as.numeric(Land_cover))
+```
+
+### Validate Percentage Range
+
+```{r}
+# Check for values outside the valid percentage range
+cover_df %>%
+  filter(Land_cover > 100 | Land_cover < 0)
+```
+
+Since we identified columns with values greater than 100 and smaller than 0, let’s fix it.
+
+```{r}
+# Set out-of-range values to NA
+cover_df <- cover_df %>%
+  mutate(Land_cover = ifelse(Land_cover > 100 | Land_cover < 0, NA, Land_cover))
+```
+
+Let’s check again to make sure the conversion worked.
+```{r}
+# Check again for values outside the valid percentage range
+cover_df %>%
+  filter(Land_cover > 100 | Land_cover < 0)
+```
+It worked!!
+
+
+## Inferring Missing Values for the Total_cover column
+
+Based on the metadata, the columns Snow_cover + Water_cover + Land_cover should always sum to 100. Where exactly one of the three columns is `NA`, we can infer it as 100 - sum(the other two). We cannot guess the values when two or more columns are missing.
+
+Let's first check how many rows fall into each case:
+
+```{r}
+# Count rows by number of NAs across the three cover columns
+cover_df %>%
+  mutate(na_count = is.na(Snow_cover) + is.na(Water_cover) + is.na(Land_cover)) %>%
+  count(na_count)
+```
+
+There are 96 rows with exactly one `NA` that can be imputed. Rows with 2 or 3 missing values cannot be recovered.
+
+```{r}
+# Impute missing values where exactly one cover column is NA
+cover_df <- cover_df %>%
+  mutate(
+    # Count NAs per row
+    na_count = is.na(Snow_cover) + is.na(Water_cover) + is.na(Land_cover),
+
+    # Infer Snow_cover if it is the only missing value
+    Snow_cover = ifelse(na_count == 1 & is.na(Snow_cover), 100 - Water_cover - Land_cover, Snow_cover),
+
+    # Infer Water_cover if it is the only missing value
+    Water_cover = ifelse(na_count == 1 & is.na(Water_cover), 100 - Snow_cover - Land_cover, Water_cover),
+
+    # Infer Land_cover if it is the only missing value
+    Land_cover = ifelse(na_count == 1 & is.na(Land_cover), 100 - Snow_cover - Water_cover, Land_cover)
+  ) %>%
+  # Drop the helper column before saving
+  select(-na_count)
+```
+
+Check if it worked
+
+```{r}
+# Count again the rows by number of NAs across the three cover columns
+cover_df %>%
+  mutate(na_count = is.na(Snow_cover) + is.na(Water_cover) + is.na(Land_cover)) %>%
+  count(na_count)
+```
+It worked. No rows with exactly 1 NA
+
+### Handle All-zero Rows
+
+The rows where all three cover columns are 0 cannot represent a valid observation, since snow, water, and land together must cover 100% of the survey area. We consider that these rows are most likely unfilled fields rather than true measurements, so we set them to `NA`.
+
+```{r}
+# Set all-zero rows to NA across all three cover columns
+cover_df <- cover_df %>%
+  mutate(
+    all_zero = Snow_cover == 0 & Water_cover == 0 & Land_cover == 0,
+    Snow_cover  = ifelse(all_zero, NA, Snow_cover),
+    Water_cover = ifelse(all_zero, NA, Water_cover),
+    Land_cover  = ifelse(all_zero, NA, Land_cover)
+  ) %>%
+  select(-all_zero)
+```
+
+### Recompute Total_cover
+
+Now, we recompute Total_cover from the cleaned columns. The rows where the three columns do not sum to 100 receive NA, because an explicit missing value is better than a wrong total. I chose to preserve the individual cover columns as-is because most of them can still be used independently for analysis even when the other columns are missing.
+
+```{r}
+# Recompute Total_cover; set to NA if columns do not sum to 100
+cover_df <- cover_df %>%
+  mutate(
+    Total_cover = Snow_cover + Water_cover + Land_cover,
+    Total_cover = ifelse(Total_cover != 100, NA, Total_cover)
+  )
+```
+
+### Sanity Check
+
+```{r}
+# Confirm no non-NA Total_cover values differ from 100
+cover_df %>%
+  filter(!is.na(Total_cover), Total_cover != 100) %>%
+  nrow()
+```
+
+All non-NA totals equal 100!!
+
+
+## Write Output
+
+```{r}
+# check if the folder exists
+dir.create(datadir_processed, showWarnings = FALSE)
+
+# Write the cleaned data to a CSV file
+write_csv(cover_df, file.path(datadir_processed, "all_cover_fixed_HYLAEA.csv"))
+```

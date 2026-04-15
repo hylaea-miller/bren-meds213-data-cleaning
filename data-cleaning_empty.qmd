@@ -286,5 +286,3 @@ dir.create(datadir_processed, showWarnings = FALSE)
 write_csv(species_presence, file.path(datadir_processed, "species_presence.csv"))
 ```
 
-
-
